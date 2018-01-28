@@ -221,13 +221,260 @@ interface Quad {
   };
 }
 
+const INTEGER_MATH_SHIFT = 8;
+
 export function locate(matrix: BitMatrix): QRLocation {
+  function get(x: number, y: number): boolean {
+    x = Math.floor(x);
+    y = Math.floor(y);
+    return matrix.get(x, y);
+  }
+  function foundPatternCross(stateCount: number[]): boolean {
+    var totalModuleSize = 0;
+    for (var i = 0; i < 5; i++) {
+      var count = stateCount[i];
+      if (count === 0)
+        return false;
+      totalModuleSize += count;
+    }
+
+    if (totalModuleSize < 7)
+      return false;
+
+    var moduleSize = (totalModuleSize << INTEGER_MATH_SHIFT) / 7;
+    var maxVariance = moduleSize / 2;
+    // Allow less than 50% variance from 1-1-3-1-1 proportions
+    return Math.abs(moduleSize - (stateCount[0] << INTEGER_MATH_SHIFT)) < maxVariance &&
+      Math.abs(moduleSize - (stateCount[1] << INTEGER_MATH_SHIFT)) < maxVariance &&
+      Math.abs(3 * moduleSize - (stateCount[2] << INTEGER_MATH_SHIFT)) < 3 * maxVariance &&
+      Math.abs(moduleSize - (stateCount[3] << INTEGER_MATH_SHIFT)) < maxVariance &&
+      Math.abs(moduleSize - (stateCount[4] << INTEGER_MATH_SHIFT)) < maxVariance;
+  }
+  function centerFromEnd(stateCount: number[], end: number): number {
+    var result = (end - stateCount[4] - stateCount[3]) - stateCount[2] / 2;
+    // Fix this.
+    if (result !== result) {
+      return null;
+    }
+    return result;
+  }
+  function crossCheckVertical(startI: number, centerJ: number, maxCount: number, originalStateCountTotal: number): number {
+    var maxI = matrix.height;
+    var stateCount = [0, 0, 0, 0, 0];
+
+    // Start counting up from center
+    var i = startI;
+    while (i >= 0 && get(centerJ, i)) {
+      stateCount[2]++;
+      i--;
+    }
+    if (i < 0) {
+      return null;
+    }
+    while (i >= 0 && !get(centerJ, i) && stateCount[1] <= maxCount) {
+      stateCount[1]++;
+      i--;
+    }
+    // If already too many modules in this state or ran off the edge:
+    if (i < 0 || stateCount[1] > maxCount) {
+      return null;
+    }
+    while (i >= 0 && get(centerJ, i) && stateCount[0] <= maxCount) {
+      stateCount[0]++;
+      i--;
+    }
+    if (stateCount[0] > maxCount) {
+      return null;
+    }
+
+    // Now also count down from center
+    i = startI + 1;
+    while (i < maxI && get(centerJ, i)) {
+      stateCount[2]++;
+      i++;
+    }
+    if (i == maxI) {
+      return null;
+    }
+    while (i < maxI && !get(centerJ, i) && stateCount[3] < maxCount) {
+      stateCount[3]++;
+      i++;
+    }
+    if (i == maxI || stateCount[3] >= maxCount) {
+      return null;
+    }
+    while (i < maxI && get(centerJ, i) && stateCount[4] < maxCount) {
+      stateCount[4]++;
+      i++;
+    }
+    if (stateCount[4] >= maxCount) {
+      return null;
+    }
+
+    // If we found a finder-pattern-like section, but its size is more than 40% different than
+    // the original, assume it's a false positive
+    var stateCountTotal = stateCount[0] + stateCount[1] + stateCount[2] + stateCount[3] + stateCount[4];
+    if (5 * Math.abs(stateCountTotal - originalStateCountTotal) >= 2 * originalStateCountTotal) {
+      return null;
+    }
+
+    return foundPatternCross(stateCount) ? centerFromEnd(stateCount, i) : null;
+  }
+  function crossCheckHorizontal(startJ: number, centerI: number, maxCount: number, originalStateCountTotal: number): number {
+    var maxJ = matrix.width;
+    var stateCount = [0, 0, 0, 0, 0];
+
+    var j = startJ;
+    while (j >= 0 && get(j, centerI)) {
+      stateCount[2]++;
+      j--;
+    }
+    if (j < 0) {
+      return null;
+    }
+    while (j >= 0 && !get(j, centerI) && stateCount[1] <= maxCount) {
+      stateCount[1]++;
+      j--;
+    }
+    if (j < 0 || stateCount[1] > maxCount) {
+      return null;
+    }
+    while (j >= 0 && get(j, centerI) && stateCount[0] <= maxCount) {
+      stateCount[0]++;
+      j--;
+    }
+    if (stateCount[0] > maxCount) {
+      return null;
+    }
+
+    j = startJ + 1;
+    while (j < maxJ && get(j, centerI)) {
+      stateCount[2]++;
+      j++;
+    }
+    if (j == maxJ) {
+      return null;
+    }
+    while (j < maxJ && !get(j, centerI) && stateCount[3] < maxCount) {
+      stateCount[3]++;
+      j++;
+    }
+    if (j == maxJ || stateCount[3] >= maxCount) {
+      return null;
+    }
+    while (j < maxJ && get(j, centerI) && stateCount[4] < maxCount) {
+      stateCount[4]++;
+      j++;
+    }
+    if (stateCount[4] >= maxCount) {
+      return null;
+    }
+
+    // If we found a finder-pattern-like section, but its size is significantly different than
+    // the original, assume it's a false positive
+    var stateCountTotal = stateCount[0] + stateCount[1] + stateCount[2] + stateCount[3] + stateCount[4];
+    if (5 * Math.abs(stateCountTotal - originalStateCountTotal) >= originalStateCountTotal) {
+      return null;
+    }
+
+    return foundPatternCross(stateCount) ? centerFromEnd(stateCount, j) : null;
+  }
+
+  function crossCheckDiagonal(startI: number, centerJ: number, maxCount: number, originalStateCountTotal: number): boolean {
+    var maxI = matrix.height;
+    var maxJ = matrix.width;
+    var stateCount = [0, 0, 0, 0, 0];
+
+    // Start counting up, left from center finding black center mass
+    var i = 0;
+    while (startI - i >= 0 && get(centerJ - i, startI - i)) {
+      stateCount[2]++;
+      i++;
+    }
+
+    if ((startI - i < 0) || (centerJ - i < 0)) {
+      return false;
+    }
+
+    // Continue up, left finding white space
+    while ((startI - i >= 0) && (centerJ - i >= 0) && !get(centerJ - i, startI - i) && stateCount[1] <= maxCount) {
+      stateCount[1]++;
+      i++;
+    }
+
+    // If already too many modules in this state or ran off the edge:
+    if ((startI - i < 0) || (centerJ - i < 0) || stateCount[1] > maxCount) {
+      return false;
+    }
+
+    // Continue up, left finding black border
+    while ((startI - i >= 0) && (centerJ - i >= 0) && get(centerJ - i, startI - i) && stateCount[0] <= maxCount) {
+      stateCount[0]++;
+      i++;
+    }
+    if (stateCount[0] > maxCount) {
+      return false;
+    }
+
+    // Now also count down, right from center
+    i = 1;
+    while ((startI + i < maxI) && (centerJ + i < maxJ) && get(centerJ + i, startI + i)) {
+      stateCount[2]++;
+      i++;
+    }
+
+    // Ran off the edge?
+    if ((startI + i >= maxI) || (centerJ + i >= maxJ)) {
+      return false;
+    }
+
+    while ((startI + i < maxI) && (centerJ + i < maxJ) && !get(centerJ + i, startI + i) && stateCount[3] < maxCount) {
+      stateCount[3]++;
+      i++;
+    }
+
+    if ((startI + i >= maxI) || (centerJ + i >= maxJ) || stateCount[3] >= maxCount) {
+      return false;
+    }
+
+    while ((startI + i < maxI) && (centerJ + i < maxJ) && get(centerJ + i, startI + i) && stateCount[4] < maxCount) {
+      stateCount[4]++;
+      i++;
+    }
+
+    if (stateCount[4] >= maxCount) {
+      return false;
+    }
+
+    // If we found a finder-pattern-like section, but its size is more than 100% different than
+    // the original, assume it's a false positive
+    var stateCountTotal = stateCount[0] + stateCount[1] + stateCount[2] + stateCount[3] + stateCount[4];
+    return Math.abs(stateCountTotal - originalStateCountTotal) < 2 * originalStateCountTotal &&
+      foundPatternCross(stateCount);
+  }
+
+  function handlePossibleCenter(stateCount: number[], i: number, j: number, pureBarcode: boolean): boolean {
+    var stateCountTotal = stateCount[0] + stateCount[1] + stateCount[2] + stateCount[3] + stateCount[4];
+    var centerJ = centerFromEnd(stateCount, j);
+    if (centerJ == null)
+      return false;
+    var centerI = crossCheckVertical(i, Math.floor(centerJ), stateCount[2], stateCountTotal);
+    if (centerI != null) {
+      // Re-cross check
+      centerJ = crossCheckHorizontal(Math.floor(centerJ), Math.floor(centerI), stateCount[2], stateCountTotal);
+      if (centerJ != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   const finderPatternQuads: Quad[] = [];
   let activeFinderPatternQuads: Quad[] = [];
   const alignmentPatternQuads: Quad[] = [];
   let activeAlignmentPatternQuads: Quad[] = [];
 
-  for (let y = 0; y <= matrix.height; y++) {
+  for (let y = 1; y < matrix.height; y+=2) {   // Performance hack, interleave scan
     let length = 0;
     let lastBit = false;
     let scans = [0, 0, 0, 0, 0];
@@ -249,7 +496,8 @@ export function locate(matrix: BitMatrix): QRLocation {
           Math.abs(scans[2] - 3 * averageFinderPatternBlocksize) < 3 * averageFinderPatternBlocksize &&
           Math.abs(scans[3] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
           Math.abs(scans[4] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
-          !v; // And make sure the current pixel is white since finder patterns are bordered in white
+          !v &&
+          handlePossibleCenter(scans, y, x, false); // And make sure the current pixel is white since finder patterns are bordered in white
 
         // Do the last 3 color changes ~ match the expected ratio for an alignment pattern? 1:1:1 of w:b:w
         const averageAlignmentPatternBlocksize = sum(scans.slice(-3)) / 3;
@@ -315,6 +563,10 @@ export function locate(matrix: BitMatrix): QRLocation {
 
   finderPatternQuads.push(...activeFinderPatternQuads.filter(q => q.bottom.y - q.top.y >= 2));
   alignmentPatternQuads.push(...activeAlignmentPatternQuads);
+
+  if (finderPatternQuads.length < 3) {
+    return null
+  }
 
   const finderPatternGroups = finderPatternQuads
     .filter(q => q.bottom.y - q.top.y >= 2) // All quads must be at least 2px tall since the center square is larger than a block

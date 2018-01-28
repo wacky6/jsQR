@@ -325,9 +325,15 @@ exports.default = GenericGFPoly;
 
 Object.defineProperty(exports, "__esModule", { value: true });
 var binarizer_1 = __webpack_require__(4);
+exports.binarize = binarizer_1.binarize;
+var BitMatrix_1 = __webpack_require__(0);
+exports.BitMatrix = BitMatrix_1.BitMatrix;
 var decoder_1 = __webpack_require__(5);
+exports.decode = decoder_1.decode;
 var extractor_1 = __webpack_require__(11);
+exports.extract = extractor_1.extract;
 var locator_1 = __webpack_require__(12);
+exports.locate = locator_1.locate;
 function x(data, width, height) {
     var binarized = binarizer_1.binarize(data, width, height);
     var location = locator_1.locate(binarized);
